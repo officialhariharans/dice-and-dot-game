@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Dice & Dots: Online</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --surface: #1e293b;
+            --primary: #6366f1;
+            --text: #f8fafc;
+            --dot-color: #94a3b8;
+            --line-inactive: rgba(255, 255, 255, 0.05);
+            --line-hover: rgba(255, 255, 255, 0.3);
+            --dot-size: 16px; 
+            --line-thickness: 8px;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+        }
+
+        /* --- LOBBY SCREEN --- */
+        #lobby-screen {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: var(--bg); z-index: 2000;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            padding: 20px; box-sizing: border-box;
+            transition: opacity 0.5s;
+        }
+        .lobby-card {
+            background: var(--surface); padding: 30px; border-radius: 20px;
+            width: 100%; max-width: 400px; text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        h1 { margin: 0 0 20px 0; font-size: 2rem; background: linear-gradient(to right, #818cf8, #c084fc); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        
+        input, select {
+            width: 100%; padding: 12px; margin-bottom: 15px;
+            background: var(--bg); border: 2px solid #334155;
+            color: white; border-radius: 8px; font-size: 1rem;
+            box-sizing: border-box;
+        }
+        
+        .btn {
+            background: var(--primary); color: white; border: none;
+            padding: 15px; width: 100%; border-radius: 10px;
+            font-size: 1.1rem; font-weight: bold; cursor: pointer;
+            transition: transform 0.1s; margin-top: 10px;
+        }
+        .btn:active { transform: scale(0.98); }
+        .btn.secondary { background: #334155; margin-top: 10px; }
+        
+        #invite-area { display: none; margin-top: 20px; background: rgba(0,0,0,0.2); padding: 15px; border-radius: 10px; }
+        #invite-link { word-break: break-all; font-family: monospace; color: #818cf8; margin-bottom: 10px; user-select: text;}
+
+        /* --- GAME UI --- */
+        #game-ui { display: none; flex-direction: column; height: 100%; }
+
+        /* Header */
+        .top-bar {
+            padding: 15px; display: flex; justify-content: space-between; align-items: center;
+            background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+        .score-box { display: flex; gap: 15px; }
+        .p-badge { 
+            padding: 5px 12px; border-radius: 20px; font-weight: bold; font-size: 0.9rem;
+            border: 2px solid transparent; opacity: 0.6; transition: all 0.3s;
+        }
+        .p-badge.active { opacity: 1; transform: scale(1.05); box-shadow: 0 0 15px rgba(0,0,0,0.3); }
+
+        /* Tools */
+        .tools { display: flex; gap: 10px; }
+        .icon-btn {
+            background: var(--bg); border: 1px solid #334155; color: #94a3b8;
+            width: 40px; height: 40px; border-radius: 8px;
+            display: flex; justify-content: center; align-items: center; cursor: pointer;
+            font-size: 1.2rem;
+        }
+        .icon-btn.active { background: #334155; color: white; border-color: var(--primary); }
+
+        /* Board Area */
+        #board-container {
+            flex: 1; display: flex; justify-content: center; align-items: center;
+            position: relative; overflow: hidden;
+        }
+        #board { position: relative; }
+
+        /* Visual Elements */
+        .dot {
+            position: absolute; width: var(--dot-size); height: var(--dot-size);
+            background: var(--dot-color); border-radius: 50%;
+            transform: translate(-50%, -50%); z-index: 10;
+        }
+
+        .line {
+            position: absolute; background: var(--line-inactive);
+            z-index: 5; transition: background 0.2s;
+        }
+        /* Hitbox for easier clicking */
+        .line::after { content: ''; position: absolute; top: -15px; bottom: -15px; left: -15px; right: -15px; z-index: 6; cursor: pointer; }
+
+        /* Point-to-Point Styling */
+        .line.h { height: var(--line-thickness); transform: translateY(-50%); }
+        .line.v { width: var(--line-thickness); transform: translateX(-50%); }
+
+        /* Visibility States */
+        .line.hidden { opacity: 0; } /* Default state */
+        .line.hidden:hover { opacity: 1; background: var(--line-hover); }
+        .show-helpers .line.hidden { opacity: 1; } /* Toggle state */
+        
+        .line.taken { opacity: 1; z-index: 8; }
+        .line.valid { background: #fbbf24 !important; opacity: 1 !important; animation: pulse 1s infinite; z-index: 9;}
+
+        .box {
+            position: absolute; display: flex; justify-content: center; align-items: center;
+            font-weight: 900; font-size: 1.5rem; color: rgba(255,255,255,0.9);
+            border-radius: 4px; transform: scale(0); transition: transform 0.3s; z-index: 1;
+        }
+        .box.filled { transform: scale(0.95); }
+
+        /* Dice & Controls */
+        #bottom-controls {
+            padding: 20px; display: flex; justify-content: center; align-items: center;
+            flex-direction: column; gap: 10px; pointer-events: none;
+        }
+        #dice-btn {
+            width: 70px; height: 70px; background: white; color: #333;
+            border-radius: 16px; font-size: 2rem; font-weight: bold;
+            display: flex; justify-content: center; align-items: center;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3); pointer-events: auto; cursor: pointer;
+            transition: transform 0.1s;
+        }
+        #dice-btn:active { transform: scale(0.9); }
+        #status-text { font-size: 0.9rem; opacity: 0.7; font-weight: 600; margin-bottom: 5px; }
+
+        /* Animations */
+        @keyframes pulse { 0% { opacity: 0.6; } 50% { opacity: 1; } 100% { opacity: 0.6; } }
+        .shake { animation: shake 0.4s; }
+        @keyframes shake { 0%, 100% {transform: translateX(0);} 25% {transform: translateX(-5px);} 75% {transform: translateX(5px);} }
+
+    </style>
+</head>
+<body>
+
+    <div id="lobby-screen">
+        <div class="lobby-card" id="start-menu">
+            <h1>Dice & Dots</h1>
+            <div id="host-form">
+                <input type="text" id="my-name" placeholder="Your Name" value="Player 1">
+                <div style="display:flex; gap:10px;">
+                    <input type="color" id="my-color" value="#6366f1" style="height:50px; flex:1;">
+                    <select id="grid-size" style="flex:2;">
+                        <option value="4">4x4 Grid (Quick)</option>
+                        <option value="6" selected>6x6 Grid (Standard)</option>
+                        <option value="8">8x8 Grid (Long)</option>
+                    </select>
+                </div>
+                <button class="btn" onclick="Net.hostGame()">Host Game</button>
+            </div>
+            <div id="join-status" style="display:none; margin-top:20px;">
+                <p>Joining Game...</p>
+                <div class="loader"></div>
+            </div>
+        </div>
+
+        <div class="lobby-card" id="invite-menu" style="display:none;">
+            <h2>Waiting for Player...</h2>
+            <p>Send this link to your friend:</p>
+            <div id="invite-area" style="display:block;">
+                <div id="invite-link">Generating...</div>
+                <button class="btn secondary" onclick="Net.copyLink()">Copy Link</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="game-ui">
+        <div class="top-bar">
+            <div class="score-box">
+                <div class="p-badge" id="p1-badge">P1: 0</div>
+                <div class="p-badge" id="p2-badge">P2: 0</div>
+            </div>
+            <div class="tools">
+                <button class="icon-btn" id="helper-btn" onclick="Game.toggleHelpers()">👁️</button>
+            </div>
+        </div>
+
+        <div id="board-container">
+            <div id="board"></div>
+        </div>
+
+        <div id="bottom-controls">
+            <div id="status-text">Waiting for game start...</div>
+            <div id="dice-btn" onclick="Game.rollDice()">🎲</div>
+        </div>
+    </div>
+
+<script>
+/**
+ * NETWORK ENGINE (PeerJS)
+ */
+const Net = {
+    peer: null,
+    conn: null,
+    isHost: false,
+    myId: null,
+
+    init() {
+        // Check URL for join code
+        const params = new URLSearchParams(window.location.search);
+        const joinId = params.get('game');
+
+        if (joinId) {
+            this.joinGame(joinId);
+        }
+    },
+
+    hostGame() {
+        const name = document.getElementById('my-name').value;
+        const color = document.getElementById('my-color').value;
+        const size = parseInt(document.getElementById('grid-size').value);
+
+        // Setup Player 1 (Me)
+        Game.config.p1 = { name, color };
+        Game.state.grid = size;
+        
+        document.getElementById('start-menu').style.display = 'none';
+        document.getElementById('invite-menu').style.display = 'block';
+
+        this.isHost = true;
+        this.peer = new Peer(); // Auto-gen ID
+
+        this.peer.on('open', (id) => {
+            this.myId = id;
+            const link = `${window.location.origin}${window.location.pathname}?game=${id}`;
+            document.getElementById('invite-link').innerText = link;
+        });
+
+        this.peer.on('connection', (conn) => {
+            this.conn = conn;
+            this.setupConnection();
+            // Start Game once connected
+            setTimeout(() => {
+                this.send({ type: 'INIT', config: Game.config, state: Game.state });
+                Game.start();
+            }, 1000);
+        });
+    },
+
+    joinGame(hostId) {
+        document.getElementById('host-form').style.display = 'none';
+        document.getElementById('join-status').style.display = 'block';
+
+        this.isHost = false;
+        this.peer = new Peer();
+
+        this.peer.on('open', (id) => {
+            this.conn = this.peer.connect(hostId);
+            this.setupConnection();
+        });
+    },
+
+    setupConnection() {
+        this.conn.on('open', () => {
+            console.log("Connected!");
+            // If joining, send my details
+            if (!this.isHost) {
+                // Prompt for name/color would go here, simplified for auto-join
+                const rName = "Player 2";
+                const rColor = "#ef4444"; // Default P2 color
+                this.send({ type: 'JOIN_INFO', name: rName, color: rColor });
+            }
+        });
+
+        this.conn.on('data', (data) => {
+            this.handleData(data);
+        });
+    },
+
+    send(data) {
+        if (this.conn && this.conn.open) {
+            this.conn.send(data);
+        }
+    },
+
+    handleData(data) {
+        switch(data.type) {
+            case 'INIT':
+                // Joiner receiving setup
+                Game.config = data.config;
+                Game.state = data.state;
+                Game.start();
+                break;
+            case 'JOIN_INFO':
+                // Host receiving Joiner details
+                Game.config.p2 = { name: data.name, color: data.color };
+                this.send({ type: 'UPDATE_CONFIG', config: Game.config }); // Sync back
+                break;
+            case 'UPDATE_CONFIG':
+                Game.config = data.config;
+                Game.updateUI();
+                break;
+            case 'ROLL':
+                Game.animateDice(data.value);
+                break;
+            case 'MOVE':
+                Game.executeMove(data.type, data.r, data.c, false); // false = don't resend
+                break;
+            case 'TURN_CHANGE':
+                Game.state.turn = data.turn;
+                Game.state.moves = data.moves;
+                Game.state.path = [];
+                Game.updateUI();
+                break;
+        }
+    },
+
+    copyLink() {
+        const text = document.getElementById('invite-link').innerText;
+        navigator.clipboard.writeText(text).then(() => alert("Link Copied!"));
+    }
+};
+
+/**
+ * GAME ENGINE
+ */
+const Game = {
+    config: {
+        p1: { name: "Host", color: "#6366f1" },
+        p2: { name: "Guest", color: "#ef4444" }
+    },
+    state: {
+        grid: 6,
+        turn: 0, // 0 = p1, 1 = p2
+        moves: 0,
+        path: [],
+        hLines: [],
+        vLines: [],
+        boxes: [],
+        scores: [0, 0],
+        gameOver: false
+    },
+    showHelpers: false,
+
+    start() {
+        // Init Data Arrays
+        const s = this.state.grid;
+        // Only init if empty (Host already has it, Joiner gets it from Host)
+        if (this.state.hLines.length === 0) {
+            this.state.hLines = Array(s).fill(null).map(() => Array(s-1).fill(null));
+            this.state.vLines = Array(s-1).fill(null).map(() => Array(s).fill(null));
+            this.state.boxes = Array(s-1).fill(null).map(() => Array(s-1).fill(null));
+        }
+
+        document.getElementById('lobby-screen').style.display = 'none';
+        document.getElementById('game-ui').style.display = 'flex';
+        
+        this.renderBoard();
+        this.updateUI();
+    },
+
+    renderBoard() {
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        const size = this.state.grid;
+        
+        // Calculate dynamic spacing
+        const screenW = Math.min(window.innerWidth, 500) - 40;
+        const spacing = screenW / (size - 1);
+        
+        board.style.width = screenW + 'px';
+        board.style.height = screenW + 'px';
+
+        // Helper function for Point-to-Point lines
+        const createLine = (type, r, c) => {
+            const l = document.createElement('div');
+            l.className = `line ${type} hidden`;
+            l.id = `${type}-${r}-${c}`;
+            
+            // Exact sizing to touch dots
+            if (type === 'h') {
+                l.style.width = spacing + 'px';
+                l.style.left = (c * spacing) + 'px';
+                l.style.top = (r * spacing) + 'px';
+            } else {
+                l.style.height = spacing + 'px';
+                l.style.left = (c * spacing) + 'px';
+                l.style.top = (r * spacing) + 'px';
+            }
+            
+            l.onclick = () => this.handleInput(type, r, c);
+            board.appendChild(l);
+        };
+
+        // Render Lines
+        for(let r=0; r<size; r++) for(let c=0; c<size-1; c++) createLine('h', r, c);
+        for(let r=0; r<size-1; r++) for(let c=0; c<size; c++) createLine('v', r, c);
+
+        // Render Dots (On top)
+        for(let r=0; r<size; r++) {
+            for(let c=0; c<size; c++) {
+                const d = document.createElement('div');
+                d.className = 'dot';
+                d.style.left = (c * spacing) + 'px';
+                d.style.top = (r * spacing) + 'px';
+                board.appendChild(d);
+            }
+        }
+
+        // Render Boxes
+        for(let r=0; r<size-1; r++) {
+            for(let c=0; c<size-1; c++) {
+                const b = document.createElement('div');
+                b.className = 'box';
+                b.id = `box-${r}-${c}`;
+                b.style.width = spacing + 'px';
+                b.style.height = spacing + 'px';
+                b.style.left = (c * spacing) + 'px';
+                b.style.top = (r * spacing) + 'px';
+                board.appendChild(b);
+            }
+        }
+    },
+
+    toggleHelpers() {
+        this.showHelpers = !this.showHelpers;
+        const btn = document.getElementById('helper-btn');
+        const board = document.getElementById('board');
+        
+        if (this.showHelpers) {
+            btn.classList.add('active');
+            board.classList.add('show-helpers');
+        } else {
+            btn.classList.remove('active');
+            board.classList.remove('show-helpers');
+        }
+    },
+
+    isMyTurn() {
+        if (Net.isHost && this.state.turn === 0) return true;
+        if (!Net.isHost && this.state.turn === 1) return true;
+        return false;
+    },
+
+    rollDice() {
+        if (!this.isMyTurn()) return;
+        if (this.state.moves > 0) return;
+
+        const val = Math.floor(Math.random() * 6) + 1;
+        Net.send({ type: 'ROLL', value: val });
+        this.animateDice(val);
+    },
+
+    animateDice(val) {
+        const btn = document.getElementById('dice-btn');
+        btn.classList.add('shake');
+        let i = 0;
+        const interval = setInterval(() => {
+            btn.innerText = Math.floor(Math.random() * 6) + 1;
+            i++;
+            if (i > 10) {
+                clearInterval(interval);
+                btn.classList.remove('shake');
+                btn.innerText = val;
+                this.state.moves = val;
+                this.state.path = [];
+                this.updateUI();
+                this.highlightValid();
+            }
+        }, 50);
+    },
+
+    handleInput(type, r, c) {
+        if (!this.isMyTurn()) return;
+        if (this.state.moves <= 0) {
+            alert("Roll the dice first!");
+            return;
+        }
+
+        // Validate Move
+        if (!this.isValidMove(type, r, c)) return;
+
+        // Send to Network
+        Net.send({ type: 'MOVE', type: type, r: r, c: c });
+        this.executeMove(type, r, c, true);
+    },
+
+    isValidMove(type, r, c) {
+        // 1. Taken?
+        const isTaken = type === 'h' ? this.state.hLines[r][c] : this.state.vLines[r][c];
+        if (isTaken !== null) return false;
+
+        // 2. Snake Rule (Connectivity)
+        if (this.state.path.length > 0) {
+            const last = this.state.path[this.state.path.length - 1];
+            // Nodes of proposed line
+            const n1 = type === 'h' ? `${r},${c}` : `${r},${c}`;
+            const n2 = type === 'h' ? `${r},${c+1}` : `${r+1},${c}`;
+            
+            // Must share a node with last line
+            const l1 = last.n1; const l2 = last.n2;
+            if (n1 !== l1 && n1 !== l2 && n2 !== l1 && n2 !== l2) return false;
+        }
+        return true;
+    },
+
+    executeMove(type, r, c, isLocal) {
+        // Logic
+        if (type === 'h') this.state.hLines[r][c] = this.state.turn;
+        else this.state.vLines[r][c] = this.state.turn;
+
+        // Visual
+        const el = document.getElementById(`${type}-${r}-${c}`);
+        const pColor = this.state.turn === 0 ? this.config.p1.color : this.config.p2.color;
+        
+        el.style.background = pColor;
+        el.classList.remove('hidden');
+        el.classList.add('taken');
+
+        // Path Tracking
+        const n1 = type === 'h' ? `${r},${c}` : `${r},${c}`;
+        const n2 = type === 'h' ? `${r},${c+1}` : `${r+1},${c}`;
+        this.state.path.push({ n1, n2 });
+
+        // Scoring
+        this.checkBoxes();
+
+        if (isLocal) {
+             // Decrement moves locally if I did it
+             // (Logic is mirrored on remote, but state management usually stays with logic owner)
+        }
+        
+        this.state.moves--;
+        
+        // Turn End Logic
+        if (this.state.moves === 0) {
+            this.state.turn = this.state.turn === 0 ? 1 : 0;
+            this.state.path = [];
+            document.getElementById('dice-btn').innerText = "🎲";
+            if(Net.isHost) Net.send({ type: 'TURN_CHANGE', turn: this.state.turn, moves: 0 });
+        }
+
+        this.updateUI();
+        this.highlightValid();
+    },
+
+    checkBoxes() {
+        const s = this.state.grid;
+        const pid = this.state.turn;
+        const color = pid === 0 ? this.config.p1.color : this.config.p2.color;
+        const name = pid === 0 ? this.config.p1.name : this.config.p2.name;
+
+        for(let r=0; r<s-1; r++) {
+            for(let c=0; c<s-1; c++) {
+                if(this.state.boxes[r][c] !== null) continue;
+
+                const top = this.state.hLines[r][c] !== null;
+                const bot = this.state.hLines[r+1][c] !== null;
+                const left = this.state.vLines[r][c] !== null;
+                const right = this.state.vLines[r][c+1] !== null;
+
+                if (top && bot && left && right) {
+                    this.state.boxes[r][c] = pid;
+                    this.state.scores[pid]++;
+                    
+                    const b = document.getElementById(`box-${r}-${c}`);
+                    b.classList.add('filled');
+                    b.style.background = color;
+                    b.innerText = name.charAt(0);
+                }
+            }
+        }
+    },
+
+    updateUI() {
+        // Names & Scores
+        const p1b = document.getElementById('p1-badge');
+        const p2b = document.getElementById('p2-badge');
+        
+        p1b.innerText = `${this.config.p1.name}: ${this.state.scores[0]}`;
+        p2b.innerText = `${this.config.p2.name}: ${this.state.scores[1]}`;
+        
+        p1b.style.backgroundColor = this.config.p1.color;
+        p2b.style.backgroundColor = this.config.p2.color;
+
+        p1b.classList.toggle('active', this.state.turn === 0);
+        p2b.classList.toggle('active', this.state.turn === 1);
+
+        // Status Text
+        const status = document.getElementById('status-text');
+        if (this.isMyTurn()) {
+            if (this.state.moves === 0) status.innerText = "Your Turn: Roll the Dice!";
+            else status.innerText = `Your Turn: ${this.state.moves} moves left`;
+        } else {
+            status.innerText = "Opponent's Turn...";
+        }
+    },
+
+    highlightValid() {
+        // Clear old valid
+        document.querySelectorAll('.valid').forEach(e => e.classList.remove('valid'));
+        
+        if (!this.isMyTurn() || this.state.moves === 0) return;
+
+        const s = this.state.grid;
+        
+        const check = (t, r, c) => {
+            const el = document.getElementById(`${t}-${r}-${c}`);
+            if (el && !el.classList.contains('taken')) {
+                // If path exists, check connectivity
+                if (this.state.path.length > 0) {
+                    if (this.isValidMove(t, r, c)) el.classList.add('valid');
+                } else {
+                    // Start of turn: all free lines are valid
+                     el.classList.add('valid');
+                }
+            }
+        };
+
+        for(let r=0; r<s; r++) for(let c=0; c<s-1; c++) check('h', r, c);
+        for(let r=0; r<s-1; r++) for(let c=0; c<s; c++) check('v', r, c);
+    }
+};
+
+// Start Network Initialization
+Net.init();
+</script>
+</body>
+</html>
