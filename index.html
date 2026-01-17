@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>Dice & Dash: Swipe Edition</title>
+    <style>
+        :root {
+            --primary: #4f46e5;
+            --bg: #f8fafc;
+            --surface: #ffffff;
+            --text: #1e293b;
+            --dot: #334155;
+            --line-inactive: #e2e8f0;
+            --shadow: rgba(0, 0, 0, 0.1);
+            --line-width: 12px; /* Thicker for easier touch */
+            --dot-size: 20px;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg: #0f172a;
+                --surface: #1e293b;
+                --text: #f1f5f9;
+                --dot: #94a3b8;
+                --line-inactive: #334155;
+                --shadow: rgba(0, 0, 0, 0.5);
+            }
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        /* --- UI OVERLAY --- */
+        .ui-layer {
+            z-index: 100;
+            padding: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: var(--surface);
+            box-shadow: 0 4px 20px var(--shadow);
+            border-bottom-left-radius: 20px;
+            border-bottom-right-radius: 20px;
+        }
+
+        .score-pill {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 8px 16px;
+            border-radius: 12px;
+            background: var(--bg);
+            border: 2px solid transparent;
+            transition: transform 0.2s;
+        }
+        .score-pill.active { transform: scale(1.1); box-shadow: 0 0 15px currentColor; }
+        .score-val { font-size: 1.5rem; font-weight: 800; line-height: 1; }
+        .score-name { font-size: 0.7rem; opacity: 0.8; font-weight: 600; text-transform: uppercase; }
+
+        /* --- DICE AREA --- */
+        #dice-container {
+            position: absolute; bottom: 30px; left: 50%;
+            transform: translateX(-50%); z-index: 100;
+            display: flex; flex-direction: column; align-items: center; gap: 10px;
+            pointer-events: auto;
+        }
+
+        .dice-btn {
+            width: 70px; height: 70px;
+            background: linear-gradient(145deg, #ffffff, #e6e6e6);
+            border-radius: 16px;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 2.2rem;
+            box-shadow: 0 10px 25px var(--shadow);
+            cursor: pointer; transition: transform 0.1s;
+            color: #333;
+        }
+        .dice-btn:active { transform: scale(0.9); }
+        .dice-btn.disabled { opacity: 0.5; filter: grayscale(1); pointer-events: none; }
+
+        .moves-badge {
+            background: #ef4444; color: white; font-weight: bold;
+            padding: 4px 10px; border-radius: 20px; font-size: 0.8rem;
+            opacity: 0; transform: translateY(10px); transition: all 0.3s;
+        }
+        .moves-badge.visible { opacity: 1; transform: translateY(0); }
+
+        /* --- GAME BOARD --- */
+        #game-area {
+            flex: 1; position: relative;
+            display: flex; justify-content: center; align-items: center;
+            overflow: hidden;
+        }
+
+        #board { position: relative; }
+
+        .dot {
+            position: absolute;
+            width: var(--dot-size); height: var(--dot-size);
+            background: var(--dot);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 20; /* Highest priority for touch */
+            box-shadow: 0 2px 4px var(--shadow);
+            transition: transform 0.2s, background 0.3s;
+        }
+        
+        /* INVISIBLE HITBOX FOR DOTS - Makes them easier to grab */
+        .dot::after {
+            content: '';
+            position: absolute;
+            top: -15px; bottom: -15px; left: -15px; right: -15px;
+            border-radius: 50%;
+            z-index: 20;
+        }
+
+        .dot.active-drag {
+            transform: translate(-50%, -50%) scale(1.5);
+            background: var(--primary);
+        }
+
+        .line {
+            position: absolute;
+            background: var(--line-inactive);
+            border-radius: 10px;
+            z-index: 5;
+            transition: background 0.2s;
+            cursor: pointer;
+        }
+        /* Line Hitbox for clicks */
+        .line::after { content: ''; position: absolute; top: -10px; bottom: -10px; left: -10px; right: -10px; }
+
+        .line.h { height: var(--line-width); transform: translateY(-50%); }
+        .line.v { width: var(--line-width); transform: translateX(-50%); }
+
+        .line.valid { background: #fbbf24; animation: pulse-line 1s infinite; }
+        @keyframes pulse-line { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
+        .line.taken { z-index: 6; }
+
+        .box {
+            position: absolute;
+            display: flex; justify-content: center; align-items: center;
+            font-weight: 900; color: rgba(255,255,255,0.9);
+            border-radius: 8px; transform: scale(0);
+            transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.27);
+            z-index: 3;
+        }
+        .box.filled { transform: scale(0.92); }
+
+        /* --- MODALS --- */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); backdrop-filter: blur(5px);
+            z-index: 2000; display: none;
+            justify-content: center; align-items: center;
+        }
+        .modal-card {
+            background: var(--surface); padding: 30px; border-radius: 20px;
+            width: 85%; max-width: 400px; text-align: center;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+            animation: slideUp 0.4s;
+        }
+        @keyframes slideUp { from { transform: translateY(50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+        .btn-primary {
+            background: var(--primary); color: white; border: none;
+            padding: 15px 30px; border-radius: 12px; font-size: 1.1rem;
+            font-weight: bold; width: 100%; margin-top: 15px; cursor: pointer;
+        }
+
+        .toggle-group { display: flex; background: var(--line-inactive); padding: 4px; border-radius: 10px; margin-bottom: 20px; }
+        .toggle-opt { flex: 1; padding: 10px; border-radius: 8px; cursor: pointer; font-weight: 600; font-size: 0.9rem; }
+        .toggle-opt.selected { background: var(--surface); box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+
+        /* --- PARTICLES & FX --- */
+        .particle {
+            position: absolute; pointer-events: none; z-index: 99;
+            border-radius: 50%; animation: pop 0.6s forwards;
+        }
+        @keyframes pop { 100% { transform: translate(var(--x), var(--y)) scale(0); opacity: 0; } }
+        .shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
+        @keyframes shake { 10%, 90% { transform: translate3d(-2px, 0, 0); } 20%, 80% { transform: translate3d(4px, 0, 0); } 40%, 60% { transform: translate3d(8px, 0, 0); } }
+
+    </style>
+</head>
+<body>
+
+    <div class="ui-layer">
+        <div class="score-pill" id="p1-pill" style="border-color: #3b82f6; color: #3b82f6;">
+            <span class="score-val" id="p1-score">0</span>
+            <span class="score-name" id="p1-name">You</span>
+        </div>
+        <div style="font-weight: 900; opacity: 0.3; font-size: 1.2rem;">VS</div>
+        <div class="score-pill" id="p2-pill" style="border-color: #ef4444; color: #ef4444;">
+            <span class="score-val" id="p2-score">0</span>
+            <span class="score-name" id="p2-name">CPU</span>
+        </div>
+    </div>
+
+    <div id="game-area">
+        <div id="board"></div>
+    </div>
+
+    <div id="dice-container">
+        <div class="moves-badge" id="moves-indicator">0 moves left</div>
+        <div class="dice-btn" id="dice-btn" onclick="Game.rollDice()">🎲</div>
+    </div>
+
+    <div id="setup-modal" class="modal-overlay" style="display: flex;">
+        <div class="modal-card">
+            <h2>New Game</h2>
+            <div class="toggle-group">
+                <div class="toggle-opt selected" onclick="Setup.setMode('cpu', this)">Single Player</div>
+                <div class="toggle-opt" onclick="Setup.setMode('pvp', this)">Two Player</div>
+            </div>
+            <div class="toggle-group">
+                <div class="toggle-opt" onclick="Setup.setSize(4, this)">4x4</div>
+                <div class="toggle-opt selected" onclick="Setup.setSize(6, this)">6x6</div>
+                <div class="toggle-opt" onclick="Setup.setSize(8, this)">8x8</div>
+            </div>
+            <button class="btn-primary" onclick="Game.init()">Start Playing</button>
+        </div>
+    </div>
+
+    <div id="winner-modal" class="modal-overlay">
+        <div class="modal-card">
+            <h1 style="font-size: 3rem; margin: 0;">🏆</h1>
+            <h2 id="w-title">Winner!</h2>
+            <p id="w-subtitle"></p>
+            <button class="btn-primary" onclick="location.reload()">Play Again</button>
+        </div>
+    </div>
+
+<script>
+/* --- AUDIO --- */
+const AudioEngine = {
+    ctx: new (window.AudioContext || window.webkitAudioContext)(),
+    playTone(freq, type, duration) {
+        if (this.ctx.state === 'suspended') this.ctx.resume();
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type; osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+        gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+        osc.connect(gain); gain.connect(this.ctx.destination);
+        osc.start(); osc.stop(this.ctx.currentTime + duration);
+    },
+    sfxRoll() { this.playTone(400, 'triangle', 0.1); },
+    sfxMove() { this.playTone(600, 'sine', 0.1); },
+    sfxScore() { this.playTone(800, 'square', 0.1); setTimeout(() => this.playTone(1200, 'square', 0.2), 100); },
+    sfxWin() { [0, 200, 400].forEach(t => setTimeout(() => this.playTone(1000, 'sine', 0.3), t)); }
+};
+
+/* --- DRAG INPUT HANDLER --- */
+const DragInput = {
+    isDragging: false,
+    startDot: null, // {r, c}
+
+    // Called when touching a dot
+    start(r, c, el) {
+        if (Game.state.moves <= 0 || Game.state.isAiTurn || Game.state.gameOver) return;
+        this.isDragging = true;
+        this.startDot = {r, c};
+        el.classList.add('active-drag');
+    },
+
+    // Called when entering a dot while dragging
+    enter(r, c, el) {
+        if (!this.isDragging || !this.startDot) return;
+        if (this.startDot.r === r && this.startDot.c === c) return; // Same dot
+
+        // Check Adjacency
+        const dr = Math.abs(this.startDot.r - r);
+        const dc = Math.abs(this.startDot.c - c);
+        
+        if ((dr === 1 && dc === 0) || (dr === 0 && dc === 1)) {
+            // Valid neighbor! Try to execute move
+            this.attemptConnection(this.startDot, {r, c});
+            
+            // Visual Update: Old dot inactive, new dot active
+            document.querySelectorAll('.dot').forEach(d => d.classList.remove('active-drag'));
+            el.classList.add('active-drag');
+            
+            // Update start point so we can chain-drag (A -> B -> C)
+            this.startDot = {r, c};
+        }
+    },
+
+    stop() {
+        this.isDragging = false;
+        this.startDot = null;
+        document.querySelectorAll('.dot').forEach(d => d.classList.remove('active-drag'));
+    },
+
+    attemptConnection(p1, p2) {
+        let type, r, c;
+        if (p1.r === p2.r) {
+            // Horizontal
+            type = 'h';
+            r = p1.r;
+            c = Math.min(p1.c, p2.c);
+        } else {
+            // Vertical
+            type = 'v';
+            r = Math.min(p1.r, p2.r);
+            c = p1.c;
+        }
+        Game.handleInput(type, r, c);
+    }
+};
+
+/* --- GAME LOGIC --- */
+const Setup = {
+    mode: 'cpu', size: 6,
+    setMode(m, el) { this.mode = m; document.querySelectorAll('#setup-modal .toggle-group:nth-of-type(1) .toggle-opt').forEach(e => e.classList.remove('selected')); el.classList.add('selected'); document.getElementById('p2-name').innerText = m === 'cpu' ? 'CPU' : 'Player 2'; },
+    setSize(s, el) { this.size = s; document.querySelectorAll('#setup-modal .toggle-group:nth-of-type(2) .toggle-opt').forEach(e => e.classList.remove('selected')); el.classList.add('selected'); }
+};
+
+const Game = {
+    state: { grid: 6, players: [{ name: "You", color: "#3b82f6", score: 0 }, { name: "CPU", color: "#ef4444", score: 0 }], turn: 0, moves: 0, path: [], hLines: [], vLines: [], boxes: [], gameOver: false, isAiTurn: false },
+    
+    init() {
+        this.state.grid = Setup.size;
+        this.state.players[1].name = Setup.mode === 'cpu' ? "CPU" : "Player 2";
+        this.state.players[1].color = Setup.mode === 'cpu' ? "#ef4444" : "#ec4899";
+        this.state.hLines = Array(this.state.grid).fill(null).map(() => Array(this.state.grid-1).fill(null));
+        this.state.vLines = Array(this.state.grid-1).fill(null).map(() => Array(this.state.grid).fill(null));
+        this.state.boxes = Array(this.state.grid-1).fill(null).map(() => Array(this.state.grid-1).fill(null));
+        document.getElementById('setup-modal').style.display = 'none';
+        
+        // Add Global Listener to stop dragging anywhere on screen
+        window.addEventListener('pointerup', () => DragInput.stop());
+        
+        this.renderBoard();
+        this.updateUI();
+    },
+
+    renderBoard() {
+        const board = document.getElementById('board');
+        board.innerHTML = '';
+        const screenW = Math.min(window.innerWidth, 500);
+        const cellSize = (screenW - 40) / this.state.grid;
+        board.style.width = (cellSize * (this.state.grid - 1)) + 'px';
+        board.style.height = board.style.width;
+
+        // Draw Lines (Clickable)
+        for(let r=0; r<this.state.grid; r++) for(let c=0; c<this.state.grid-1; c++) this.createLine('h', r, c, cellSize, board);
+        for(let r=0; r<this.state.grid-1; r++) for(let c=0; c<this.state.grid; c++) this.createLine('v', r, c, cellSize, board);
+
+        // Draw Dots (Draggable)
+        for(let r=0; r<this.state.grid; r++) {
+            for(let c=0; c<this.state.grid; c++) {
+                const d = document.createElement('div');
+                d.className = 'dot';
+                d.style.left = (c * cellSize) + 'px';
+                d.style.top = (r * cellSize) + 'px';
+                
+                // POINTER EVENTS FOR DRAG
+                d.onpointerdown = (e) => {
+                    e.preventDefault(); // Stop text selection
+                    DragInput.start(r, c, d);
+                };
+                d.onpointerenter = (e) => {
+                    DragInput.enter(r, c, d);
+                };
+                
+                board.appendChild(d);
+            }
+        }
+
+        // Boxes
+        for(let r=0; r<this.state.grid-1; r++) for(let c=0; c<this.state.grid-1; c++) {
+            const b = document.createElement('div'); b.className = 'box'; b.id = `box-${r}-${c}`;
+            b.style.left = (c * cellSize) + 'px'; b.style.top = (r * cellSize) + 'px';
+            b.style.width = cellSize + 'px'; b.style.height = cellSize + 'px';
+            board.appendChild(b);
+        }
+    },
+
+    createLine(type, r, c, size, parent) {
+        const l = document.createElement('div'); l.className = `line ${type}`; l.id = `${type}-${r}-${c}`;
+        if (type === 'h') { l.style.width = size + 'px'; l.style.left = (c * size) + size/2 + 'px'; l.style.top = (r * size) + 'px'; }
+        else { l.style.height = size + 'px'; l.style.left = (c * size) + 'px'; l.style.top = (r * size) + size/2 + 'px'; }
+        l.onclick = () => this.handleInput(type, r, c); // Click still works
+        parent.appendChild(l);
+    },
+
+    rollDice() {
+        if (this.state.moves > 0 || this.state.gameOver || this.state.isAiTurn) return;
+        const btn = document.getElementById('dice-btn');
+        btn.classList.add('disabled');
+        AudioEngine.sfxRoll();
+        let rolls = 0;
+        const interval = setInterval(() => {
+            btn.innerText = Math.floor(Math.random() * 6) + 1;
+            rolls++;
+            if(rolls > 8) {
+                clearInterval(interval);
+                this.state.moves = Math.floor(Math.random() * 6) + 1;
+                this.state.path = [];
+                btn.innerText = this.state.moves;
+                btn.classList.remove('disabled');
+                this.updateUI();
+                this.highlightValidMoves();
+                if (Setup.mode === 'cpu' && this.state.turn === 1) setTimeout(() => AI.playTurn(), 800);
+            }
+        }, 50);
+    },
+
+    handleInput(type, r, c) {
+        // VALIDATION
+        if (this.state.moves <= 0 || this.state.isAiTurn) {
+            // Only shake if clicking, not dragging (drag is silent failure)
+            if(!DragInput.isDragging) this.showToast("Roll the dice!"); 
+            return;
+        }
+        if ((type === 'h' ? this.state.hLines[r][c] : this.state.vLines[r][c]) !== null) return; // Taken
+
+        // Connectivity Check
+        if (this.state.path.length > 0) {
+            const lastMove = this.state.path[this.state.path.length - 1];
+            const n1 = type === 'h' ? `${r},${c}` : `${r},${c}`;
+            const n2 = type === 'h' ? `${r},${c+1}` : `${r+1},${c}`;
+            if (!lastMove.nodes.includes(n1) && !lastMove.nodes.includes(n2)) {
+                if(!DragInput.isDragging) this.shakeBoard(); // Only shake on click errors
+                return;
+            }
+        }
+
+        // EXECUTE
+        if (type === 'h') this.state.hLines[r][c] = this.state.turn;
+        else this.state.vLines[r][c] = this.state.turn;
+        
+        const el = document.getElementById(`${type}-${r}-${c}`);
+        el.style.background = this.state.players[this.state.turn].color;
+        el.classList.add('taken');
+        
+        const n1 = type === 'h' ? `${r},${c}` : `${r},${c}`;
+        const n2 = type === 'h' ? `${r},${c+1}` : `${r+1},${c}`;
+        this.state.path.push({ nodes: [n1, n2] });
+        
+        AudioEngine.sfxMove();
+        if (this.checkScore()) { AudioEngine.sfxScore(); this.explode(el.getBoundingClientRect()); }
+
+        this.state.moves--;
+        this.updateUI();
+        this.highlightValidMoves();
+        this.checkWin();
+
+        if (this.state.moves === 0 && !this.state.gameOver) setTimeout(() => this.endTurn(), 500);
+    },
+
+    checkScore() {
+        let hit = false;
+        const pIdx = this.state.turn;
+        for(let r=0; r<this.state.grid-1; r++) for(let c=0; c<this.state.grid-1; c++) {
+            if (this.state.boxes[r][c] !== null) continue;
+            const top = this.state.hLines[r][c] !== null;
+            const bot = this.state.hLines[r+1][c] !== null;
+            const left = this.state.vLines[r][c] !== null;
+            const right = this.state.vLines[r][c+1] !== null;
+            if (top && bot && left && right) {
+                this.state.boxes[r][c] = pIdx;
+                this.state.players[pIdx].score++;
+                const b = document.getElementById(`box-${r}-${c}`);
+                b.classList.add('filled');
+                b.style.background = this.state.players[pIdx].color;
+                b.innerText = this.state.players[pIdx].name[0];
+                hit = true;
+            }
+        }
+        return hit;
+    },
+
+    endTurn() {
+        this.state.moves = 0; this.state.path = []; this.state.turn = this.state.turn === 0 ? 1 : 0;
+        document.getElementById('dice-btn').innerText = "🎲";
+        document.querySelectorAll('.valid').forEach(e => e.classList.remove('valid'));
+        this.updateUI();
+        if (Setup.mode === 'cpu' && this.state.turn === 1) {
+            this.state.isAiTurn = true; setTimeout(() => this.rollDice(), 1000);
+        } else { this.state.isAiTurn = false; }
+    },
+
+    highlightValidMoves() {
+        document.querySelectorAll('.valid').forEach(e => e.classList.remove('valid'));
+        if (this.state.moves === 0) return;
+        
+        const check = (t, r, c) => {
+            const el = document.getElementById(`${t}-${r}-${c}`);
+            if(el && !el.classList.contains('taken')) el.classList.add('valid');
+        }
+
+        if (this.state.path.length === 0) return; // Highlight nothing initially
+
+        const last = this.state.path[this.state.path.length-1];
+        last.nodes.forEach(n => {
+            const [r, c] = n.split(',').map(Number);
+            check('h', r, c-1); check('h', r, c); check('v', r-1, c); check('v', r, c);
+        });
+    },
+
+    updateUI() {
+        document.getElementById('p1-score').innerText = this.state.players[0].score;
+        document.getElementById('p2-score').innerText = this.state.players[1].score;
+        document.getElementById('p1-pill').style.opacity = this.state.turn === 0 ? 1 : 0.5;
+        document.getElementById('p2-pill').style.opacity = this.state.turn === 1 ? 1 : 0.5;
+        if(this.state.turn === 0) document.getElementById('p1-pill').classList.add('active'); else document.getElementById('p1-pill').classList.remove('active');
+        if(this.state.turn === 1) document.getElementById('p2-pill').classList.add('active'); else document.getElementById('p2-pill').classList.remove('active');
+        const badge = document.getElementById('moves-indicator');
+        if (this.state.moves > 0) { badge.innerText = `${this.state.moves} moves left`; badge.classList.add('visible'); badge.style.background = this.state.players[this.state.turn].color; }
+        else { badge.classList.remove('visible'); }
+    },
+
+    checkWin() {
+        const total = (this.state.grid-1)**2;
+        if (this.state.players[0].score + this.state.players[1].score === total) {
+            this.state.gameOver = true; AudioEngine.sfxWin();
+            const p1 = this.state.players[0].score, p2 = this.state.players[1].score;
+            document.getElementById('w-title').innerText = p1 > p2 ? "You Win!" : (p1===p2 ? "Draw!" : "CPU Wins!");
+            document.getElementById('w-subtitle').innerText = `${p1} - ${p2}`;
+            document.getElementById('winner-modal').style.display = 'flex';
+        }
+    },
+
+    showToast(msg) {
+        const t = document.createElement('div'); t.innerText = msg;
+        t.style.position = 'fixed'; t.style.bottom = '120px'; t.style.left = '50%';
+        t.style.transform = 'translateX(-50%)'; t.style.background = '#333'; t.style.color = '#fff';
+        t.style.padding = '10px 20px'; t.style.borderRadius = '20px'; t.style.zIndex = 2000;
+        document.body.appendChild(t); setTimeout(()=>t.remove(), 2000);
+    },
+    shakeBoard() { const b = document.getElementById('board'); b.classList.remove('shake'); void b.offsetWidth; b.classList.add('shake'); },
+    explode(rect) {
+        for(let i=0; i<10; i++) {
+            const p = document.createElement('div'); p.className = 'particle';
+            p.style.left = (rect.left + rect.width/2) + 'px'; p.style.top = (rect.top + rect.height/2) + 'px';
+            p.style.width = Math.random()*8+4+'px'; p.style.height = p.style.width;
+            p.style.background = this.state.players[this.state.turn].color;
+            const angle = Math.random()*Math.PI*2, dist = Math.random()*50+20;
+            p.style.setProperty('--x', Math.cos(angle)*dist+'px'); p.style.setProperty('--y', Math.sin(angle)*dist+'px');
+            document.body.appendChild(p); setTimeout(() => p.remove(), 600);
+        }
+    }
+};
+
+const AI = {
+    async playTurn() {
+        while (Game.state.moves > 0 && !Game.state.gameOver) {
+            await new Promise(r => setTimeout(r, 600));
+            const moves = this.getLegalMoves();
+            if (moves.length === 0) break;
+            let bestMove = moves[0], bestScore = -9999;
+            for (let m of moves) {
+                let score = Math.random() * 10;
+                if (this.doesCloseBox(m)) score += 100;
+                if (score > bestScore) { bestScore = score; bestMove = m; }
+            }
+            Game.handleInput(bestMove.type, bestMove.r, bestMove.c);
+        }
+    },
+    getLegalMoves() {
+        let opts = []; const g = Game.state.grid;
+        const check = (t, r, c) => (t==='h' ? (r>=0 && r<g && c>=0 && c<g-1 && Game.state.hLines[r][c]===null) : (r>=0 && r<g-1 && c>=0 && c<g && Game.state.vLines[r][c]===null));
+        if (Game.state.path.length === 0) {
+            for(let r=0; r<g; r++) for(let c=0; c<g-1; c++) if(check('h', r, c)) opts.push({type:'h', r, c});
+            for(let r=0; r<g-1; r++) for(let c=0; c<g; c++) if(check('v', r, c)) opts.push({type:'v', r, c});
+        } else {
+            const last = Game.state.path[Game.state.path.length-1];
+            last.nodes.forEach(n => {
+                const [nr, nc] = n.split(',').map(Number);
+                if(check('h', nr, nc-1)) opts.push({type:'h', r:nr, c:nc-1});
+                if(check('h', nr, nc)) opts.push({type:'h', r:nr, c:nc});
+                if(check('v', nr-1, nc)) opts.push({type:'v', r:nr-1, c:nc});
+                if(check('v', nr, nc)) opts.push({type:'v', r:nr, c:nc});
+            });
+        }
+        return opts.filter((v,i,a)=>a.findIndex(t=>(t.type===v.type && t.r===v.r && t.c===v.c))===i);
+    },
+    doesCloseBox(m) {
+        const {type, r, c} = m; let closes = false;
+        const isSet = (t, rr, cc) => (t==='h' ? (Game.state.hLines[rr]?.[cc]!=null) : (Game.state.vLines[rr]?.[cc]!=null));
+        if (type === 'h') {
+            if (r>0 && isSet('h',r-1,c) && isSet('v',r-1,c) && isSet('v',r-1,c+1)) closes = true;
+            if (r<Game.state.grid-1 && isSet('h',r+1,c) && isSet('v',r,c) && isSet('v',r,c+1)) closes = true;
+        } else {
+            if (c>0 && isSet('v',r,c-1) && isSet('h',r,c-1) && isSet('h',r+1,c-1)) closes = true;
+            if (c<Game.state.grid-1 && isSet('v',r,c+1) && isSet('h',r,c) && isSet('h',r+1,c)) closes = true;
+        }
+        return closes;
+    }
+};
+</script>
+</body>
+</html>
